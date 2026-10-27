@@ -1,0 +1,65 @@
+# COPY INTO EVERY APP REPO: .github/workflows/pr-changelog.yml  (.github/scripts/release-notes.sh 필요)
+# PR 이 열리거나 커밋이 추가될 때마다, PR 안의 커밋 메시지로 changelog 를 만들어 PR 본문에 자동으로 작성/갱신합니다.
+#   이름 브랜치 → dev : "이 PR 의 변경 내용" (예상 버전 영향 포함)
+#   dev → main        : "다음 버전 + 전체 changelog", PR 제목을 "Release vX.Y.Z" 로 변경. 머지하면 release.yml 이 같은 내용으로 릴리스
+#   hotfix/* → main   : "다음 버전 + changelog"
+# PR 본문에서 <!-- changelog:start --> ~ <!-- changelog:end --> 사이만 덮어쓰므로, 그 밖에 적은 내용은 유지됩니다.
+name: PR changelog
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize]
+permissions:
+  contents: read
+  pull-requests: write  # [ORG] org Settings > Actions > General > Workflow permissions 가 read-only 로 제한되어 있으면 PR 수정이 막힘. org 정책 확인
+concurrency:
+  group: pr-changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Update PR title and body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          RN="$RUNNER_TEMP/rn"
+          bash .github/scripts/release-notes.sh "$BASE_SHA" "$HEAD_SHA" "$RN"
+          VERSION="$(cat "$RN/version")"; CURRENT="$(cat "$RN/current")"; BUMP="$(cat "$RN/bump")"; COUNT="$(cat "$RN/count")"
+          {
+            echo '<!-- changelog:start -->'
+            if [[ "$BASE_REF" == main && -n "$VERSION" ]]; then
+              echo "## 🚀 $VERSION 릴리스 예정"
+              echo
+              echo "> $CURRENT → **$VERSION** ($BUMP) · 커밋 ${COUNT}개 · 머지하면 \`$VERSION\` 태그와 GitHub Release 가 자동 생성됩니다."
+            else
+              echo "## 📝 이 PR 의 변경 내용"
+              echo
+              echo "> 커밋 ${COUNT}개${BUMP:+ · 버전 영향: **$BUMP**} · 이 영역은 커밋이 추가되면 자동으로 갱신됩니다."
+            fi
+            echo
+            cat "$RN/notes.md"
+            echo '<!-- changelog:end -->'
+          } > "$RUNNER_TEMP/gen.md"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.body // ""' > "$RUNNER_TEMP/old.md"
+          if grep -q '<!-- changelog:start -->' "$RUNNER_TEMP/old.md"; then
+            awk -v gen="$RUNNER_TEMP/gen.md" '
+              /<!-- changelog:start -->/ { while ((getline l < gen) > 0) print l; skip = 1; next }
+              /<!-- changelog:end -->/   { skip = 0; next }
+              !skip' "$RUNNER_TEMP/old.md" > "$RUNNER_TEMP/new.md"
+          else
+            { cat "$RUNNER_TEMP/gen.md"; echo; cat "$RUNNER_TEMP/old.md"; } > "$RUNNER_TEMP/new.md"
+          fi
+          TITLE="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .title)"
+          if [[ "$BASE_REF" == main && "$HEAD_REF" == dev && -n "$VERSION" ]]; then TITLE="Release $VERSION"; fi
+          jq -n --rawfile body "$RUNNER_TEMP/new.md" --arg title "$TITLE" '{body: $body, title: $title}' \
+            | gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$PR" --input - > /dev/null
+          echo "PR #$PR ($HEAD_REF → $BASE_REF): 커밋 $COUNT개 ${VERSION:+→ $VERSION}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,85 @@
+# COPY INTO EVERY APP REPO: .github/workflows/commit-check.yml  (.github/scripts/commit-lint.sh 필요)
+# PR 안의 모든 커밋 메시지가 규칙에 맞는지 검사합니다. 개발자가 어떤 Git 툴을 쓰든 우회할 수 없는 최종 관문입니다.
+# changelog 와 버전은 커밋 메시지로 만들어지므로, 규칙에 맞지 않는 커밋이 하나라도 있으면 머지할 수 없습니다.
+#   이름 브랜치 → dev, hotfix/* → main, main → dev(역머지) : PR 안의 커밋 검사 (머지 커밋 제외)
+#   dev → main (릴리스 PR)                                  : dev 에 들어올 때 이미 검사했으므로 통과
+# 위반 시 PR 에 규칙 + 수정 방법 안내 댓글을 달고 실패합니다. 고쳐서 다시 push 하면 같은 댓글이 ✅ 로 바뀝니다.
+# 평소에는 로컬 훅(.githooks/commit-msg)이 커밋 시점에 먼저 막아 주므로, 여기서 걸리는 경우는 드뭅니다.
+# repo Settings > Rules 의 dev, main 보호 규칙에 이 체크(convention)를 Required 로 지정해야 머지가 막힙니다.  # [ORG] org 전환 후 org Rulesets 로 모든 repo 에 일괄 적용 가능
+name: Commit convention
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize]
+permissions:
+  contents: read
+  pull-requests: write  # [ORG] org Settings > Actions > General > Workflow permissions 가 read-only 로 제한되어 있으면 안내 댓글 작성이 막힘
+concurrency:
+  group: commit-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  convention:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check commit messages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          LINT=.github/scripts/commit-lint.sh
+          if [[ "$BASE_REF" == main && "$HEAD_REF" == dev ]]; then
+            echo "dev → main 릴리스 PR 은 검사하지 않습니다"; exit 0
+          fi
+          ERRORS="$RUNNER_TEMP/errors.md"; : > "$ERRORS"
+          while IFS=$'\t' read -r sha author subject; do
+            if [[ "$subject" =~ ^(fixup|squash|amend)!\  ]] || ! bash "$LINT" "$subject" 2>/dev/null; then
+              printf -- "- \`%s\` %s — \`%s\`\n" "${sha:0:7}" "$author" "$subject" >> "$ERRORS"
+            fi
+          done < <(git log --no-merges --reverse --format='%H%x09%an%x09%s' "$BASE_SHA..$HEAD_SHA")
+
+          MARKER='<!-- commit-convention -->'
+          COMMENT_ID="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | sed -n 1p)"
+          BODY="$RUNNER_TEMP/body.md"; : > "$BODY"
+          if [[ -s "$ERRORS" ]]; then
+            {
+              echo "$MARKER"
+              echo "### ❌ 커밋 메시지 규칙 위반"
+              echo
+              echo "커밋 메시지는 그대로 changelog 가 되므로 아래 커밋을 규칙에 맞게 수정해야 머지할 수 있습니다."
+              echo
+              cat "$ERRORS"
+              echo
+              echo "**수정 방법** — 메시지를 고친 뒤 이 브랜치에 강제 push 하면 자동으로 다시 검사합니다."
+              echo "- IntelliJ / WebStorm / PhpStorm: Git 로그에서 커밋 우클릭 → *Edit Commit Message* → *Force Push*"
+              echo "- SourceTree: 수정할 커밋의 부모 우클릭 → *Rebase children of … interactively* → *Edit message* → 강제 push"
+              echo "- CLI: \`git rebase -i origin/$BASE_REF\` → 해당 줄을 \`reword\` 로 변경 → \`git push --force-with-lease\`"
+              echo
+              echo "다음부터 커밋 시점에 막으려면 로컬 훅을 켜세요: \`git config core.hooksPath .githooks\`"
+              echo
+              echo '```'
+              bash "$LINT" --guide
+              echo '```'
+            } > "$BODY"
+          elif [[ -n "$COMMENT_ID" ]]; then
+            printf '%s\n### ✅ 모든 커밋 메시지가 규칙에 맞습니다\n' "$MARKER" > "$BODY"
+          fi
+          if [[ -s "$BODY" ]]; then
+            if [[ -n "$COMMENT_ID" ]]; then
+              jq -n --rawfile body "$BODY" '{body: $body}' | gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" --input - > /dev/null
+            else
+              jq -n --rawfile body "$BODY" '{body: $body}' | gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --input - > /dev/null
+            fi
+          fi
+          if [[ -s "$ERRORS" ]]; then
+            echo "::error::커밋 메시지 규칙 위반 — PR 댓글의 안내를 확인하세요"
+            cat "$ERRORS"
+            exit 1
+          fi

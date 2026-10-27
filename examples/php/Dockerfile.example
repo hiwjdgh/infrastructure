@@ -1,0 +1,30 @@
+# COPY INTO THE php-frontend / php-backend REPO as ./Dockerfile, together with examples/php/docker/ → ./docker/
+# php-fpm + nginx in ONE container, serving HTTP on port 80.
+# The platform Nginx proxies HTTP to each blue/green container, so FastCGI stays inside the container
+# (php-fpm listens on 127.0.0.1:9000 only and is not reachable from other containers).
+# Pinned to 8.3.36 for CVE fixes; keep in sync with the production server PHP version.
+ARG PHP_VERSION=8.3.36
+FROM php:${PHP_VERSION}-fpm-alpine
+
+# Laravel 등 public/ 을 웹 루트로 쓰면: --build-arg DOCUMENT_ROOT=/var/www/html/public
+ARG DOCUMENT_ROOT=/var/www/html
+ENV DOCUMENT_ROOT=${DOCUMENT_ROOT} \
+    PHP_FPM_MAX_CHILDREN=10
+
+# hadolint ignore=DL3018
+RUN apk add --no-cache nginx \
+ && ln -sf /dev/stdout /var/log/nginx/access.log \
+ && ln -sf /dev/stderr /var/log/nginx/error.log \
+ && mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+# Install extensions as needed, e.g.: RUN docker-php-ext-install pdo_mysql opcache
+
+COPY docker/nginx.conf /etc/nginx/http.d/default.conf
+COPY docker/php-fpm.conf /usr/local/etc/php-fpm.d/zz-app.conf
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN sed -i "s|__DOCUMENT_ROOT__|${DOCUMENT_ROOT}|" /etc/nginx/http.d/default.conf
+
+WORKDIR /var/www/html
+COPY --chown=www-data:www-data . /var/www/html/
+
+EXPOSE 80
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

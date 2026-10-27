@@ -1,0 +1,18 @@
+# COPY INTO EVERY APP REPO: .github/workflows/branch-guard.yml
+# main 으로 들어오는 PR 은 dev 또는 hotfix/* 브랜치에서만 허용합니다.
+# repo Settings > Rules(또는 Branches) 의 main 보호 규칙에 이 체크(source-branch)를 Required 로 지정해야 강제됩니다.  # [ORG] org 전환 후 org Rulesets 로 모든 repo 에 일괄 적용 가능
+name: Branch guard
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+permissions: {}
+jobs:
+  source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          [[ "$HEAD_REF" == dev || "$HEAD_REF" == hotfix/* ]] \
+            || { echo "::error::main 으로의 PR 은 dev 또는 hotfix/* 에서만 가능합니다 (현재: $HEAD_REF)"; exit 1; }

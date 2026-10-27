@@ -1,0 +1,16 @@
+name: platform-infrastructure
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: platform-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/routes:/etc/nginx/routes:ro
+    networks:
+      - platform-network
+networks:
+  platform-network:
+    external: true

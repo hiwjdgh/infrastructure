@@ -1,0 +1,28 @@
+services:
+  blue:
+    image: ${BLUE_IMAGE}
+    container_name: platform-${SERVICE}-blue
+    restart: unless-stopped
+    mem_limit: ${MEMORY_LIMIT:-512m}  # MEMORY_LIMIT / NODE_OPTIONS / APP_ENV_FILE are set by scripts/deploy-service.sh
+    memswap_limit: ${MEMORY_LIMIT:-512m}
+    env_file:  # requires Compose >= 2.24
+      - path: ${APP_ENV_FILE:-/dev/null}
+        required: false
+    environment:
+      - NODE_OPTIONS
+    networks: [platform-network]
+  green:
+    image: ${GREEN_IMAGE}
+    container_name: platform-${SERVICE}-green
+    restart: unless-stopped
+    mem_limit: ${MEMORY_LIMIT:-512m}
+    memswap_limit: ${MEMORY_LIMIT:-512m}
+    env_file:
+      - path: ${APP_ENV_FILE:-/dev/null}
+        required: false
+    environment:
+      - NODE_OPTIONS
+    networks: [platform-network]
+networks:
+  platform-network:
+    external: true

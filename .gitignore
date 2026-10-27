@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+runtime/
+nginx/routes/*.conf
+!nginx/routes/.gitkeep
+*.pem
+*.key
+
+# App runtime env files (secrets). Only *.env.example is committed.
+environments/*/*.env

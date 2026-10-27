@@ -1,0 +1,36 @@
+# COPY INTO THE php-frontend REPO: .github/workflows/ghcr.yml
+# dev / main 에 push 될 때마다 sha-<커밋 7자리> 태그로 이미지를 빌드·푸시합니다. deploy.yml 은 이 태그를 배포합니다.
+# php-backend 저장소에서는 이 파일의 php-frontend 를 모두 php-backend 로 바꾸세요. (release / deploy / branch-guard 도 동일)
+name: Publish GHCR image
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+  packages: write  # [ORG] org Settings > Packages 에서 Actions의 패키지 생성 허용 + 패키지 Settings > Manage Actions access 에 이 repo 추가(Write)
+env:
+  IMAGE: ghcr.io/hiwjdgh/php-frontend  # [ORG] ghcr.io/<org>/php-frontend 로 변경
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,format=short
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}

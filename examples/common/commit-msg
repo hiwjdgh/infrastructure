@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# COPY INTO EVERY APP REPO: .githooks/commit-msg  (실행 권한 필요: git update-index --chmod=+x .githooks/commit-msg)
+# 커밋할 때 메시지 규칙을 검사해서, 규칙에 맞지 않으면 커밋을 거부하고 안내를 보여줍니다.
+# 커밋 메시지가 그대로 changelog 가 되므로 모든 개발자가 켜야 합니다. 자동 활성화(권장):
+#   Node : package.json   "scripts": { "prepare": "git config core.hooksPath .githooks || true" }        → npm install 시
+#   PHP  : composer.json  "scripts": { "post-install-cmd": ["git config core.hooksPath .githooks || true"] } → composer install 시
+#   수동 : git config core.hooksPath .githooks
+exec bash "$(git rev-parse --show-toplevel)/.github/scripts/commit-lint.sh" --file "$1"

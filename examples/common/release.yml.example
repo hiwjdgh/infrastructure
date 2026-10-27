@@ -1,0 +1,38 @@
+# COPY INTO EVERY APP REPO: .github/workflows/release.yml  (.github/scripts/release-notes.sh 필요)
+# dev → main (또는 hotfix/* → main) PR 이 머지되면 pr-changelog.yml 이 PR 에 보여준 버전으로
+# vX.Y.Z 태그와 GitHub Release(changelog) 를 만듭니다. GitHub Releases 페이지가 누적 changelog 입니다.
+# main 에 커밋을 남기지 않으므로 dev / main 이 어긋나지 않습니다. 배포는 deploy.yml 을 수동 실행하세요.
+# changelog 는 개발자들의 커밋 메시지로 만들어집니다. dev, main 모두 "Create a merge commit" 으로만 머지하세요. (squash 하면 커밋이 하나로 합쳐짐)
+name: Release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write  # [ORG] org Settings > Actions > General > Workflow permissions 가 read-only 로 제한되어 있으면 태그 생성이 막힘. org 정책 확인
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute version and changelog
+        id: ver
+        run: |
+          LAST="$(git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | sed -n 1p)"
+          if [[ -n "$LAST" && "$(git rev-list -n 1 "$LAST")" == "$(git rev-parse HEAD)" ]]; then
+            echo "HEAD 가 이미 $LAST 로 태그되어 있습니다"; exit 0
+          fi
+          bash .github/scripts/release-notes.sh "$LAST" HEAD "$RUNNER_TEMP/rn"
+          echo "tag=$(cat "$RUNNER_TEMP/rn/version")" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        if: steps.ver.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/rn/notes.md"
+          echo "Released $TAG — Actions > Deploy 를 main 브랜치로 실행하면 prod 에 배포됩니다." >> "$GITHUB_STEP_SUMMARY"
